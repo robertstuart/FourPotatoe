@@ -56,13 +56,15 @@ void setRunningState() {
   if (mode == MODE_FP) { 
     // Set the runnng bit to control motors
     if (isRunReady && isUpright) {
-      isRunning = true;
+      if (!isRunning) {  // change state?
+        isRunning = true;
+        homeTickPosition = tickPositionDw;
+      }
     }
     else {
       isRunning = false;
     }
-  }
-  else { // For all test modes, just set accoding to ready bit
+  } else { // For all test modes, just set accoding to ready bit
     isRunning = isRunReady;
   }
 
@@ -79,8 +81,12 @@ void setRunningState() {
   
   if (!isController) controllerX = controllerY = 0.0f;
 
-  digitalWrite(PWM_DW, isRunning ? HIGH : LOW);
-//  digitalWrite(PWM_RW, isRunning ? HIGH : LOW);
+  if ((mode == MODE_FP)) {
+    digitalWrite(PWM_DW, isRunning ? HIGH : LOW);
+  }
+  if ((mode == MODE_FP) ||  (mode == MODE_T_SPEED) || (mode = MODE_RW_ANGLE)) {  
+    digitalWrite(PWM_RW, isRunning ? HIGH : LOW);
+  }
 }
 
 
@@ -274,6 +280,8 @@ void setBeep() {
   }
 }
 
+
+
 void beepIsr() {
   if (--beepCycleCount <= 0) {
     setBeep();
@@ -282,6 +290,73 @@ void beepIsr() {
   digitalWrite(SPEAKER, beepStat);
 }
 
+
+
+/**************************************************************************.
+ *  rcRadioInit() 
+ **************************************************************************/
+void rcRadioInit() {
+  pinMode(CH2_RADIO, INPUT);
+  pinMode(CH3_RADIO, INPUT);
+  pinMode(CH4_RADIO, INPUT);
+  attachInterrupt(CH2_RADIO, ch2Isr, CHANGE);
+  attachInterrupt(CH3_RADIO, ch3Isr, CHANGE);
+  attachInterrupt(CH4_RADIO, ch4Isr, CHANGE);
+}
+
+
+
+/**************************************************************************.
+ *  chXIsr() 
+ **************************************************************************/
+void ch2Isr() {
+  unsigned int t = micros();
+  boolean enc = (!!(g_APinDescription[CH2_RADIO].pPort -> PIO_PDSR & g_APinDescription[CH2_RADIO].ulPin)) ? true : false;
+  if (enc) {
+    ch2riseTime = t;
+  } else {
+    ch2pw = t - ch2riseTime; 
+  }
+}
+void ch3Isr() {
+  unsigned int t = micros();
+  boolean enc = (!!(g_APinDescription[CH3_RADIO].pPort -> PIO_PDSR & g_APinDescription[CH3_RADIO].ulPin)) ? true : false;
+  if (enc) {
+    ch3riseTime = t;
+  } else {
+    ch3pw = t - ch3riseTime; 
+  }
+}
+void ch4Isr() {
+  unsigned int t = micros();
+  boolean enc = (!!(g_APinDescription[CH4_RADIO].pPort -> PIO_PDSR & g_APinDescription[CH4_RADIO].ulPin)) ? true : false;
+  if (enc) {
+    ch4riseTime = t;
+  } else {
+    ch4pw = t - ch4riseTime; 
+  }
+}
+
+
+
+/**************************************************************************.
+ *  readRcRadio() 
+ **************************************************************************/
+void readRcRadio() {
+  float p;
+  if ((timeMicroseconds - ch2riseTime) > 100000) {
+    controllerX = 0.0;
+    controllerY = 0.0;
+  } else {
+    p = ((float) (ch2pw - 1500));
+    controllerY = p / 326.0;
+    p = ((float) (ch4pw - 1500));
+    controllerX = p / 376.0;
+    ch3sw = ch3pw < 1100;
+    controllerY = constrain(controllerY, -1.0, 1.0);
+    controllerX = constrain(controllerX, -1.0, 1.0);
+  }
+}
 
 // Routines output -1000 to +1000 for pulse widths of 1 MS to 1 MS
 void   ch1Isr() {
@@ -294,6 +369,17 @@ void   ch1Isr() {
 //    ch1Val = ((t - highTime) - 1500) * 2;
 //    lastCh1 = t;
 //  }
+}
+
+
+
+/**************************************************************************.
+ *  rangeAngle() Set angle value between -180 and +180
+ **************************************************************************/
+double rangeAngle(double head) {
+  while (head > 180.0D) head -= 360.0D;
+  while (head <= -180.0D) head += 360.0D;
+  return head;
 }
 
 
@@ -315,4 +401,3 @@ void addLog(long aVal, short bVal, short cVal, short dVal, short eVal, short fVa
     dataArrayPtr = dataArrayPtr %  DATA_ARRAY_SIZE;
   }
 }
-

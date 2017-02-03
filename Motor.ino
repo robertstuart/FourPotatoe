@@ -20,8 +20,8 @@ void motorInit() {
   pwm_setup(DIR_DW, 20000, 1);  // on clock A
   pwm_setup(DIR_RW, 20000, 1);  // on clock A
   
-  setMotor(true, ZERO_PW);
-  setMotor(false, ZERO_PW);
+  setMotorPw(true, ZERO_PW);
+  setMotorPw(false, ZERO_PW);
 
   attachInterrupt(ENC_A_DW, encoderIsrDw, CHANGE);
   attachInterrupt(ENC_A_RW, encoderIsrRw, CHANGE);
@@ -33,9 +33,7 @@ void motorInit() {
  * encoderIsrDw() Drive wheel interrupt
  *********************************************************/
 void encoderIsrDw() {
-  static int lastTickPeriodDw = 0;
   static boolean encAStat;
-  int pw = 0;
   boolean encA = (!!(g_APinDescription[ENC_A_DW].pPort -> PIO_PDSR & g_APinDescription[ENC_A_DW].ulPin)) ? true : false;
   if (encA == encAStat) {
     interruptErrorsDw++;
@@ -47,22 +45,27 @@ void encoderIsrDw() {
   boolean encB = (!!(g_APinDescription[ENC_B_DW].pPort -> PIO_PDSR & g_APinDescription[ENC_B_DW].ulPin)) ? true : false;
     
   if (encA != encB) {
-    tickPeriodDw = (long) tickTimeDw - (long) lastTickTime;
+    if (tickPeriodDw < 0) {  // reversed?
+      tickPeriodDw = 1000000;  
+    } else {
+      tickPeriodDw = (long) tickTimeDw - (long) lastTickTime;
+    }
     tickPositionDw++;
   } 
   else {
-    tickPeriodDw = (long) lastTickTime - (long) tickTimeDw;
+    if (tickPeriodDw >= 0) {  // reversed?
+      tickPeriodDw = -1000000;
+    } else {
+      tickPeriodDw = (long) lastTickTime - (long) tickTimeDw;
+    }
     tickPositionDw--;
   }
   mFpsDw = (ENC_FACTOR_M / tickPeriodDw); // speed in milli-fps
-
-// is this needed!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  if (isRunning && ((mode == MODE_FP) ||  (mode == MODE_T_SPEED))) {
-    int speedError = mFpsDw - targetMFpsDw;
-    int pwCorrection = MOTOR_GAIN * ((float) speedError);
-    int newPw =  targetPwDw - pwCorrection;
-    setMotor(true, newPw);
-  }
+  int speedError = mFpsDw - targetMFpsDw;
+  int pwCorrection = MOTOR_GAIN * ((float) speedError);
+  int newPw =  targetPwDw - pwCorrection;
+  setMotorPw(true, newPw);
+  
 //  addLog(
 //        (long) (tickPeriodDw),
 //        (short) (fpsDw * 100.0),
@@ -80,9 +83,8 @@ void encoderIsrDw() {
  *  encoderIsrRw() Reaction wheel interrupt
  ************************************************************************/
 void encoderIsrRw() {
-  static int lastTickPeriodRw = 0;
+//return;
   static boolean encAStat;
-  int pw = 0;
   boolean encA = (!!(g_APinDescription[ENC_A_RW].pPort -> PIO_PDSR & g_APinDescription[ENC_A_RW].ulPin)) ? true : false;
   if (encA == encAStat) {
     interruptErrorsRw++;
@@ -94,22 +96,26 @@ void encoderIsrRw() {
   boolean encB = (!!(g_APinDescription[ENC_B_RW].pPort -> PIO_PDSR & g_APinDescription[ENC_B_RW].ulPin)) ? true : false;
     
   if (encA != encB) {
-    tickPeriodRw = (long) tickTimeRw - (long) lastTickTime;
+    if (tickPeriodRw < 0) {
+      tickPeriodRw = 1000000;
+    } else {
+      tickPeriodRw = (long) tickTimeRw - (long) lastTickTime;
+    }
     tickPositionRw++;
-  } 
-  else {
-    tickPeriodRw = (long) lastTickTime - (long) tickTimeRw;
+  } else {
+    if (tickPeriodRw >= 0) {
+      tickPeriodRw = -1000000;
+    } else {
+      tickPeriodRw = (long) lastTickTime - (long) tickTimeRw;
+    }
     tickPositionRw--;
   }
- mFpsRw = (ENC_FACTOR_M / tickPeriodRw); // speed in milli-fps
-
-  if (isRunning && ((mode == MODE_FP) ||  (mode == MODE_T_SPEED))) {
-    int speedError = mFpsRw - targetMFpsRw;
-    int pwCorrection = MOTOR_GAIN * ((float) speedError);
-    int newPw =  targetPwRw - pwCorrection;
-    setMotor(false, newPw);
-  }
-} // end encoderIsrMon();  // !!!!!!!!!!!!!! reactionwheel !!!!!!!!!!!!!!
+  mFpsRw = (ENC_FACTOR_M / tickPeriodRw); // speed in milli-fps
+  int speedError = mFpsRw - targetMFpsRw;
+  int pwCorrection = MOTOR_GAIN * ((float) speedError);
+  int newPw =  targetPwRw - pwCorrection;
+  setMotorPw(false, newPw);
+} // end encoderIsrRw();  // !!!!!!!!!!!!!! reactionwheel !!!!!!!!!!!!!!
 
 
 
@@ -127,8 +133,8 @@ void checkMotor(boolean isDw) {
     pwCorrection = MOTOR_GAIN * ((float) speedError);
     newPw =  targetPwRw - pwCorrection;
   }
-  if (isRunning && ((mode == MODE_FP) ||  (mode == MODE_T_SPEED))) {
-    setMotor(isDw, newPw);
+  if (isRunning && ((mode == MODE_FP) ||  (mode == MODE_T_SPEED) || (mode = MODE_RW_ANGLE))) {
+    setMotorPw(isDw, newPw);
   }
 }
 
@@ -158,9 +164,10 @@ void setTargetSpeed(boolean isDw, float targetFps) {
 
  
 /*********************************************************
- * setMotor()
+ * setMotorPw()
  *********************************************************/
-void setMotor(boolean isDw, int pw) {
+void setMotorPw(boolean isDw, int pw) {
+  if (!isDw) pw = 65535 - pw;
   if (pw > 65535) pw = 65535;
   else if (pw < 0) pw = 65535;
   

@@ -25,7 +25,7 @@ const int SEND_RCV_TERM    =   0;
 const int MODE_PWM_SPEED      = 1;  // pw values sent from controller
 const int MODE_T_SPEED        = 4;  // speed controlled by ticks
 const int MODE_FP             = 9;  // FourPotatoe normal operation
-
+const int MODE_RW_ANGLE       = 11;  // Reaction wheel angle
 const int BLOCK_DATA          = 100; 
 
 // Motor Modes

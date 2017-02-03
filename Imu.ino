@@ -67,6 +67,11 @@ void setGyroData() {
   gyroHeading = gyroCumHeading - (((float) rotations) * 360.0);
 }
 
+void zeroYaw() {
+  gYaw = 0.0;
+  gyroCumHeading = 0.0;
+  gyroHeading = 0.0;
+}
 
 
 /***********************************************************************.

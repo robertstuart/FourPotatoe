@@ -76,7 +76,7 @@ void doMsg(int cmd, char msgStr[], int count, boolean isHc) {
       break;
     case RCV_RUN:
       if (sscanf(msgStr, "%d", &intVal) > 0) {
-       isRunReady = (intVal != 0);
+        isRunReady = (intVal != 0);
       }
       break;
     case RCV_MODE:

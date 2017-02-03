@@ -4,12 +4,14 @@
 #include <Wire.h>
 #include <LSM6.h>
 
-
 /******************** Constants to be adjusted **************************/
+const float TICKS_PER_FOOT = 292.2;
+const float FEET_PER_TICK = 1 / TICKS_PER_FOOT;
+const int PWM_FREQ = 20000;
 const float T_FACT = 6.0;
 const float U_FACT = 7.4;
 const float V_FACT = 4.0;
-const float W_FACT = 0.18;  // 0.18
+const float W_FACT = 0.40;  // 0.18
 const float X_FACT = 0.05;
 const float Y_FACT = 130.0;
 const float Z_FACT = 0.0;
@@ -17,17 +19,22 @@ const float COS_TC = 0.2;
 const float SPEED_MULTIPLIER = 5.0; // Multiplier for controllerX to get speed
 const float PITCH_DRIFT = -30.0;
 const float ROLL_DRIFT = -8.0;
-const float YAW_DRIFT = 15.0;
+const float YAW_DRIFT = 13.66;
 const float GYRO_SENS = 0.0696;     // Multiplier to get degree. subtract 1.8662% * 8 for 2000d/sec
-const float GYRO_WEIGHT = 0.98;    // Weight for gyro compared to accelerometer
+const float GYRO_WEIGHT = 0.98;     // Weight for gyro compared to accelerometer
 const float MOTOR_GAIN = 10.0;
+const float DECEL_FACTOR = 12.0;     // Point to change rw accel/decel
+const float ACCEL_RATE = 0.01;    // Change in rw speed each 1/200 seconds
+//const float JIG_MAX_FPS = 1.0;
+//const float JIG_FPS_INC = 0.01;   // Speed increase each 1/200 sec during jig
+const int JIG_TICK_RANGE = 55;
+const float GO_TO_INCREMENT = 0.008;
 
 /*
  * 1/293 = .00341
  */
 const double ENC_FACTOR = 3458.0f;  // Change pulse width to fps speed
 const long ENC_FACTOR_M = 3458000;  // Change pulse width to milli-fps speed
-const float TICKS_PER_FOOT = 293.0; // 
 
 static const int ZERO_PW = 32766;  // Center of pulse width range. FPS = 0;
 static const int DEAD_ZONE = 1200; // Zone around ZERO_PW that gives zero FPS
@@ -58,14 +65,10 @@ const int SPEAKER    = 35;
 const int ACCEL_INT1  = 37;
 const int GYRO_INT2  = 36;
 
-const int CH1_RADIO = 40;
-const int CH2_RADIO = 41;
-const int CH3_RADIO = 42;
-const int CH4_RADIO = 43;
-const int CH5_RADIO = 44;
-const int CH6_RADIO = 45;
+const int CH2_RADIO = 49;
+const int CH3_RADIO = 51;
+const int CH4_RADIO = 53;
 
-const int PWM_FREQ = 20000;
 
 
 
@@ -118,8 +121,12 @@ float fpCorrection = 0.0;
 float fpLpfCorrection = 0.0;
 float fpLpfCorrectionOld = 0.0;
 float fpFps = 0.0;
+int homeTickPosition = 0;
 // logXX()
 char message[200];
+
+float targetRwSpeed = 0.0;
+float targetRwAngle = 0.0;
 
 /************************ Imu.ino *************************************/
 LSM6 lsm6;
@@ -198,6 +205,15 @@ boolean isJigger = false;
 boolean isUpright = true;
 boolean isDumpingData = false;
 boolean isBattAlarmDisabled = false;
+boolean isStopped = true;
+
+int ch2pw = 0;
+int ch3pw = 0;
+int ch4pw = 0;
+unsigned int ch2riseTime = 0;
+unsigned int ch3riseTime = 0;
+unsigned int ch4riseTime = 0;
+boolean ch3sw = false;
 
 unsigned int timeMilliseconds = 0;
 unsigned int timeMicroseconds = 0;
@@ -219,24 +235,12 @@ void setup() {
   pinMode(ENC_A_RW, INPUT);
   pinMode(ENC_B_RW, INPUT);
   
-  pinMode(CH1_RADIO, INPUT);
-  pinMode(CH2_RADIO, INPUT);
-  pinMode(CH3_RADIO, INPUT);
-  pinMode(CH4_RADIO, INPUT);
-  pinMode(CH5_RADIO, INPUT);
-  pinMode(CH6_RADIO, INPUT);
-//  attachInterrupt(CH1_RADIO, ch1Isr, CHANGE);
-//  attachInterrupt(CH2_RADIO, ch2Isr, CHANGE);
-//  attachInterrupt(CH3_RADIO, ch3Isr, CHANGE);
-//  attachInterrupt(CH4_RADIO, ch4Isr, CHANGE);
-//  attachInterrupt(CH5_RADIO, ch5Isr, CHANGE);
-//  attachInterrupt(CH6_RADIO, ch6Isr, CHANGE);
-
   BLUE_SER.begin(115200);   // Bluetooth 
   Serial.begin(115200);     // for debugging output
 
   imuInit();
   motorInit();
+  rcRadioInit();
   beep(BEEP_UP);
 }
 
@@ -250,6 +254,9 @@ void loop() {
     break;
   case MODE_FP:
     fpRun();
+    break;
+  case MODE_RW_ANGLE:
+    aRwAngle();
     break;
   default:
     commonTasks; 
@@ -265,6 +272,9 @@ void loop() {
 void aPwmSpeed() {
   unsigned long pwmTrigger = 0;
   unsigned long tt;
+  
+  tVal = ZERO_PW;
+  uVal = ZERO_PW;
   isRunning = true;
   setBlink(RE_LED, BLINK_OFF);
   setBlink(BU_LED, BLINK_FF);
@@ -273,11 +283,12 @@ void aPwmSpeed() {
     commonTasks();
     if (isNewGyro()) log200PerSec();
     if (timeMicroseconds > pwmTrigger) {
-      pwmTrigger = timeMicroseconds + 100000; // 00/sec
+      pwmTrigger = timeMicroseconds + 100000; // 10/sec
       
-      setMotor(true, ((unsigned int) (tVal)));
-//      setMotor(false, ((unsigned int) (uVal)));
+      setMotorPw(true, ((unsigned int) (tVal)));
+      setMotorPw(false, ((unsigned int) (uVal)));
       readSpeed(true);  
+      readSpeed(false);  
       log10PerSec();         
       sendStatusBluePc();
 //      if (isDumpingTicks) dumpTicks();
@@ -292,6 +303,8 @@ void aPwmSpeed() {
  **************************************************************************/
 void aTickSpeed() {
   static unsigned int loop = 0;
+  tVal = 0.0;
+  uVal = 0.0;
   setBlink(RE_LED, BLINK_OFF);
   setBlink(BU_LED, BLINK_FF);
   
@@ -300,8 +313,12 @@ void aTickSpeed() {
     if (isNewGyro()) {
       fpControllerSpeed = ((float) tVal) / 1000.0;
       setTargetSpeed(true, fpControllerSpeed);
+      targetRwSpeed = ((float) uVal) / 1000.0;
+      setTargetSpeed(false, targetRwSpeed);
       checkMotor(true);
+      checkMotor(false);
       readSpeed(true);  
+      readSpeed(false);  
 //      sendLog();
 
       if ((++loop % 200) == 0) {
@@ -311,4 +328,35 @@ void aTickSpeed() {
     }
   } // while
 } // aTickSpeed()
+
+
+
+/**************************************************************************.
+ * aRwAngle()
+ **************************************************************************/
+void aRwAngle() {
+  tVal = 0.0;
+  uVal = 0.0;
+  vVal = 0.0;
+  
+  while (mode == MODE_RW_ANGLE) {
+    commonTasks();
+    if (isNewGyro()) {
+      setGyroData();
+      readSpeed(false);  
+      yawAction(tVal);
+      checkMotor(false);
+      sendLog();
+      if (!isRunning) {
+        zeroYaw();
+        targetRwSpeed = 0.0;
+      }
+
+//      if ((++loop % 200) == 0) {
+//        sprintf(message, "fpControllerSpeed: %5.2f \t fpsDw: %5.2f \t late: %d", fpControllerSpeed, fpsDw, targetPwDw);
+//        sendBMsg(SEND_MESSAGE, message);
+//      }
+    }
+  } // while
+} // aRwAngle()
 
