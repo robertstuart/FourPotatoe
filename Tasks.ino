@@ -54,11 +54,11 @@ void setRunningState() {
   byte *bk;
 
   if (mode == MODE_FP) { 
-    // Set the runnng bit to control motors
+    // Set the siRunnng bit
     if (isRunReady && isUpright) {
       if (!isRunning) {  // change state?
         isRunning = true;
-        homeTickPosition = tickPositionDw;
+        isJig = false;
       }
     }
     else {
@@ -81,10 +81,11 @@ void setRunningState() {
   
   if (!isController) controllerX = controllerY = 0.0f;
 
-  if ((mode == MODE_FP)) {
+  // Turn motors on or off
+  if ((mode == MODE_FP) && IS_ENABLE_DW) {
     digitalWrite(PWM_DW, isRunning ? HIGH : LOW);
   }
-  if ((mode == MODE_FP) ||  (mode == MODE_T_SPEED) || (mode = MODE_RW_ANGLE)) {  
+  if (((mode == MODE_FP) ||  (mode == MODE_T_SPEED) || (mode = MODE_RW_ANGLE)) && IS_ENABLE_RW) {  
     digitalWrite(PWM_RW, isRunning ? HIGH : LOW);
   }
 }
@@ -171,7 +172,7 @@ void switches() {
   static unsigned int zTimer = 0;
   static boolean zState = false;
   static boolean oldZState = false;
-  
+
   // Debounce Blue
   boolean bu = digitalRead(BU_SWITCH) == LOW;
   if (bu) buTimer = timeMilliseconds;

@@ -5,30 +5,29 @@
 #include <LSM6.h>
 
 /******************** Constants to be adjusted **************************/
+const boolean IS_ENABLE_DW = true;
+const boolean IS_ENABLE_RW = true;
 const float TICKS_PER_FOOT = 292.2;
 const float FEET_PER_TICK = 1 / TICKS_PER_FOOT;
 const int PWM_FREQ = 20000;
-const float T_FACT = 6.0;
-const float U_FACT = 7.4;
-const float V_FACT = 4.0;
-const float W_FACT = 0.40;  // 0.18
-const float X_FACT = 0.05;
-const float Y_FACT = 130.0;
-const float Z_FACT = 0.0;
+const float T_VAL = 6.0;
+const float U_VAL = 10.0;
+const float V_VAL = 4.0;
+const float W_VAL = 0.40;  // 0.18
+const float X_VAL = 0.05;
+const float Y_VAL = 0.4;   // +values veer left, -values right
+const float Z_VAL = 0.0;
 const float COS_TC = 0.2;
 const float SPEED_MULTIPLIER = 5.0; // Multiplier for controllerX to get speed
-const float PITCH_DRIFT = -30.0;
+const float PITCH_DRIFT = -36.0;
 const float ROLL_DRIFT = -8.0;
 const float YAW_DRIFT = 13.66;
 const float GYRO_SENS = 0.0696;     // Multiplier to get degree. subtract 1.8662% * 8 for 2000d/sec
 const float GYRO_WEIGHT = 0.98;     // Weight for gyro compared to accelerometer
 const float MOTOR_GAIN = 10.0;
-const float DECEL_FACTOR = 12.0;     // Point to change rw accel/decel
-const float ACCEL_RATE = 0.01;    // Change in rw speed each 1/200 seconds
 //const float JIG_MAX_FPS = 1.0;
 //const float JIG_FPS_INC = 0.01;   // Speed increase each 1/200 sec during jig
 const int JIG_TICK_RANGE = 55;
-const float GO_TO_INCREMENT = 0.008;
 
 /*
  * 1/293 = .00341
@@ -103,6 +102,7 @@ int BEEP_DOWN[] = {1000, 200, 666, 200, 0};
 
  
 int mode = MODE_FP;
+//int mode = MODE_RW_ANGLE;
 int debugInt = 0;
 float debugFloat = 0.0;
 
@@ -121,7 +121,6 @@ float fpCorrection = 0.0;
 float fpLpfCorrection = 0.0;
 float fpLpfCorrectionOld = 0.0;
 float fpFps = 0.0;
-int homeTickPosition = 0;
 // logXX()
 char message[200];
 
@@ -153,18 +152,19 @@ float aPitch = 0.0;
 float aRoll = 0.0;
 
 /************************ Motor.ino ************************************/
-int mFpsDw = 0;
-int mFpsRw = 0;
+volatile int mFpsDw = 0;
+volatile int mFpsRw = 0;
+volatile int interruptErrorsDw = 0;
+volatile int interruptErrorsRw = 0;
+volatile unsigned int tickTimeDw = 0;
+volatile unsigned int tickTimeRw = 0;
+volatile int tickPeriodDw = 0;
+volatile int tickPeriodRw = 0;
+volatile int tickPositionDw = 0;
+volatile int tickPositionRw = 0;
 float fpsDw = 0.0;
+
 float fpsRw = 0.0;
-int interruptErrorsDw = 0;
-int interruptErrorsRw = 0;
-unsigned int tickTimeDw = 0;
-unsigned int tickTimeRw = 0;
-int tickPeriodDw = 0;
-int tickPeriodRw = 0;
-int tickPositionDw = 0;
-int tickPositionRw = 0;
 float targetSpeedDw = 0.0;
 float targetMFpsDw = 0;
 float targetMFpsRw = 0;
@@ -183,13 +183,13 @@ float hcY = 0.0;
 float pcY = 0.0;
 float controllerX = 0.0;
 float controllerY = 0.0;
-float tVal = T_FACT;
-float uVal = U_FACT;
-float vVal = V_FACT;
-float wVal = W_FACT;
-float xVal = X_FACT;
-float yVal = Y_FACT;
-float zVal = Z_FACT;
+float tVal = T_VAL;
+float uVal = U_VAL;
+float vVal = V_VAL;
+float wVal = W_VAL;
+float xVal = X_VAL;
+float yVal = Y_VAL;  // roll zero
+float zVal = Z_VAL;  // pitch zero
 
 /************************ Tasks.ino ************************************/
 //controllerConnected()
@@ -205,7 +205,7 @@ boolean isJigger = false;
 boolean isUpright = true;
 boolean isDumpingData = false;
 boolean isBattAlarmDisabled = false;
-boolean isStopped = true;
+boolean isJig = false;
 
 int ch2pw = 0;
 int ch3pw = 0;
@@ -289,7 +289,7 @@ void aPwmSpeed() {
       setMotorPw(false, ((unsigned int) (uVal)));
       readSpeed(true);  
       readSpeed(false);  
-      log10PerSec();         
+      log20PerSec();         
       sendStatusBluePc();
 //      if (isDumpingTicks) dumpTicks();
     } // end timed loop 
@@ -338,11 +338,24 @@ void aRwAngle() {
   tVal = 0.0;
   uVal = 0.0;
   vVal = 0.0;
+  delay(100);  // For switches()
+  static float sum = 0.0;
+  static int loop = 0;
   
   while (mode == MODE_RW_ANGLE) {
     commonTasks();
     if (isNewGyro()) {
       setGyroData();
+      
+      sum += gyroPitchRaw;
+      loop++;
+      if (loop == 1000) {
+        sprintf(message, "raw: %6.2f \t ", sum / 1000.0);
+        sendBMsg(SEND_MESSAGE, message);
+        loop = 0;
+        sum = 0.0;
+      }
+
       readSpeed(false);  
       yawAction(tVal);
       checkMotor(false);

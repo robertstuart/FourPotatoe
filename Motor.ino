@@ -64,18 +64,16 @@ void encoderIsrDw() {
   int speedError = mFpsDw - targetMFpsDw;
   int pwCorrection = MOTOR_GAIN * ((float) speedError);
   int newPw =  targetPwDw - pwCorrection;
-  setMotorPw(true, newPw);
-  
+  setMotorPw(true, newPw); //------------------------------------------------------------------------------
 //  addLog(
-//        (long) (tickPeriodDw),
-//        (short) (fpsDw * 100.0),
-//        (short) (0),
-//        (short) (0),
-//        (short) (0),
-//        (short) (0),
-//        (short) (0)
+//    (long) (0),
+//    (short) (mFpsDw),
+//    (short) (targetMFpsDw),
+//    (short) (speedError),
+//    (short) (pwCorrection),
+//    (short) (0),
+//    (short) (newPw)
 //   );
-
 } // encoderIsrDw()
 
 
@@ -115,12 +113,21 @@ void encoderIsrRw() {
   int pwCorrection = MOTOR_GAIN * ((float) speedError);
   int newPw =  targetPwRw - pwCorrection;
   setMotorPw(false, newPw);
+//  addLog(
+//    (long) (tickTimeRw),
+//    (short) (tickPeriodRw),
+//    (short) (tickTimeRw),
+//    (short) (mFpsRw),
+//    (short) (targetMFpsRw),
+//    (short) (speedError),
+//    (short) (encB)
+//   );
 } // end encoderIsrRw();  // !!!!!!!!!!!!!! reactionwheel !!!!!!!!!!!!!!
 
 
 
 /************************************************************************
- * checkMotorXXX() Give appropriate PWM if motor is inactive.
+ *   checkMotorXXX() Give appropriate PWM if motor is inactive.
  ************************************************************************/
 void checkMotor(boolean isDw) {
   int speedError, pwCorrection, newPw;
@@ -128,6 +135,16 @@ void checkMotor(boolean isDw) {
     speedError = mFpsDw - targetMFpsDw;
     pwCorrection = MOTOR_GAIN * ((float) speedError);
     newPw =  targetPwDw - pwCorrection;
+//    addLog(
+//      (long) (5),
+//      (short) (mFpsDw),
+//      (short) (targetMFpsDw),
+//      (short) (speedError),
+//      (short) (pwCorrection),
+//      (short) (0),
+//      (short) (newPw)
+//     );
+
   } else {
     speedError = mFpsRw - targetMFpsRw;
     pwCorrection = MOTOR_GAIN * ((float) speedError);
@@ -142,7 +159,7 @@ void checkMotor(boolean isDw) {
 
 /***********************************************************************.
  *
- * setTargetSpeed()   Set the pulse width that will produce the given
+ *   setTargetSpeed()   Set the pulse width that will produce the given
  *                    speed with the motor not under load.
  *
  ***********************************************************************/
@@ -154,8 +171,7 @@ void setTargetSpeed(boolean isDw, float targetFps) {
   if (isDw) {
     targetPwDw = targetPw;
     targetMFpsDw = (int) (targetFps * 1000.0); 
-  }
-  else {
+  } else {
     targetPwRw = targetPw;
     targetMFpsRw = (int) (targetFps * 1000.0); 
   }
@@ -164,12 +180,12 @@ void setTargetSpeed(boolean isDw, float targetFps) {
 
  
 /*********************************************************
- * setMotorPw()
+ *   setMotorPw()
  *********************************************************/
 void setMotorPw(boolean isDw, int pw) {
-  if (!isDw) pw = 65535 - pw;
+  if (!isDw) pw = 65535 - pw;  // Reverse direction for reaction wheel
   if (pw > 65535) pw = 65535;
-  else if (pw < 0) pw = 65535;
+  else if (pw < 0) pw = 0;
   
   if (isDw) {
     pwDw = pw;
@@ -189,23 +205,41 @@ void setMotorPw(boolean isDw, int pw) {
  *
  ***********************************************************************/
 void readSpeed(boolean isDw) {
+  int tt, mFps;
   int waitMFps;
   if (isDw) {
-    waitMFps = ENC_FACTOR_M /(micros() - tickTimeDw);
+    noInterrupts();
+    tt = tickTimeDw;
+    mFps = mFpsDw;
+    interrupts();
+     waitMFps = ENC_FACTOR_M /(micros() - tt);
     if (mFpsDw > 0) {
-      if (waitMFps < mFpsDw) mFpsDw = waitMFps;
+      if (waitMFps < mFps) mFps = waitMFps;
     } else {
-      if (-waitMFps > mFpsDw) mFpsDw = -waitMFps;
+      if (-waitMFps > mFps) mFps = -waitMFps;
     }
-    fpsDw = ((float) mFpsDw) / 1000.0;
+    fpsDw = ((float) mFps) / 1000.0;
   } else {
-    waitMFps = ENC_FACTOR_M /(micros() - tickTimeRw);
+    noInterrupts();
+    tt = tickTimeRw;
+    mFps = mFpsRw;
+    interrupts();
+    waitMFps = ENC_FACTOR_M /(micros() - tt);
     if (mFpsRw > 0) {
-      if (waitMFps < mFpsRw) mFpsRw = waitMFps;
+      if (waitMFps < mFps) mFps = waitMFps;
     } else {
-      if (-waitMFps > mFpsRw) mFpsRw = -waitMFps;
+      if (-waitMFps > mFps) mFps = -waitMFps;
     }
-    fpsRw = ((float) mFpsRw) / 1000.0;
+    fpsRw = ((float) mFps) / 1000.0;
+//  addLog(
+//    (long) (waitMFps),
+//    (short) (mFpsRw),
+//    (short) (tt),
+//    (short) (mFps),
+//    (short) (0),
+//    (short) (0),
+//    (short) (0)
+//   );
   }
 }
 

@@ -77,12 +77,12 @@ void zeroYaw() {
 /***********************************************************************.
  *  setAccelData()
  ***********************************************************************/
+const float k8 = 45.5;  // for LSM6DS3
 void setAccelData() {
 
   // Pitch
-  float k8 = 45.5;  // for new MinImu
-//  double accelZ = lsm6.a.z + (k8 * 1000.0 * tp6LpfCosAccel);
-  float accelZ = lsm6.a.z;
+  float accelZ = lsm6.a.z - (k8 * 1000.0 * fpLpfCosAccel);
+//  float accelZ = lsm6.a.z;
   aPitch = ((atan2(accelZ, -lsm6.a.x)) * RAD_TO_DEG) + zVal;
   gaRealPitch = (gaRealPitch * GYRO_WEIGHT) + (aPitch * (1 - GYRO_WEIGHT));
   if (          (lsm6.a.x < 11000)
@@ -92,7 +92,7 @@ void setAccelData() {
   }
 
   // Roll
-  aRoll =  (atan2(lsm6.a.y, -lsm6.a.x) * RAD_TO_DEG);
+  aRoll =  (atan2(lsm6.a.y, -lsm6.a.x) * RAD_TO_DEG) + yVal;
   gaRoll = (gaRoll * GYRO_WEIGHT) + (aRoll * (1 - GYRO_WEIGHT)); // Weigh factors
 }
 
