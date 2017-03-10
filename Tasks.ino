@@ -4,8 +4,10 @@ boolean beepStat = false;
 int *beepSequence;
 int beepPtr = 0;
 
+const byte* patternBd = BLINK_OFF;
 const byte* patternBlue = BLINK_OFF;
 const byte* patternRed = BLINK_OFF;
+int blinkPtrBd = 0;
 int blinkPtrBlue = 0;
 int blinkPtrRed = 0;
 
@@ -26,6 +28,7 @@ void commonTasks() {
   timeMicroseconds = micros();
   timeMilliseconds = timeMicroseconds / 1000;
   readBluetooth();
+  rwSpin();
   blinkLed();
   battery();
   controllerConnected();
@@ -53,40 +56,48 @@ void commonTasks() {
 void setRunningState() {
   byte *bk;
 
+  // Set isRunning bit.
   if (mode == MODE_FP) { 
-    // Set the siRunnng bit
-    if (isRunReady && isUpright) {
-      if (!isRunning) {  // change state?
-        isRunning = true;
-        isJig = false;
-      }
-    }
-    else {
+    if (isRunReady && isUpright && (rwState == RW_RUNNING)) {
+       isRunning = true;
+       isJig = false;
+    } else {
       isRunning = false;
     }
+  } else if (mode == MODE_RW_ANGLE) {
+    if (isRunReady && (rwState == RW_RUNNING)) isRunning = true;
+    else isRunning = false;
   } else { // For all test modes, just set accoding to ready bit
     isRunning = isRunReady;
   }
 
-  // set red led (run state)
-  if (isRunning) bk = BLINK_ON;
-  else if (isRunReady) bk = BLINK_FF;
-  else bk = BLINK_SF;
-  setBlink(RE_LED, bk);
-
-  // set blue led (controller connected)
-  if (mode != MODE_FP) bk = BLINK_FF;
-  else bk = BLINK_SF;
-  setBlink(BU_LED, bk);
-  
+  // set LEDs
+  switch(mode) {
+    case MODE_FP: // set once at start of main loop.
+      break;
+    case MODE_PWM_SPEED:
+    case MODE_T_SPEED:
+      setBlink(BU_LED, isRunning ? BLINK_ON : BLINK_OFF);
+      setBlink(RE_LED, BLINK_FF);
+      setBlink(BD_LED, BLINK_FF);
+      break;
+    case MODE_RW_ANGLE:
+      setBlink(BU_LED, isRunReady ? BLINK_ON : BLINK_OFF);
+      setBlink(RE_LED, BLINK_FF);
+      setBlink(BD_LED, BLINK_FF);
+     break;
+  }
+    
   if (!isController) controllerX = controllerY = 0.0f;
 
   // Turn motors on or off
-  if ((mode == MODE_FP) && IS_ENABLE_DW) {
+  if (((mode == MODE_FP) || (mode == MODE_PWM_SPEED)) && IS_ENABLE_DW) {
     digitalWrite(PWM_DW, isRunning ? HIGH : LOW);
   }
-  if (((mode == MODE_FP) ||  (mode == MODE_T_SPEED) || (mode = MODE_RW_ANGLE)) && IS_ENABLE_RW) {  
+  if (((mode == MODE_T_SPEED) || (mode == MODE_PWM_SPEED)) && IS_ENABLE_RW) {  
     digitalWrite(PWM_RW, isRunning ? HIGH : LOW);
+  } else {
+    digitalWrite(PWM_RW, (rwState == RW_STOP) ? LOW : HIGH);
   }
 }
 
@@ -110,7 +121,7 @@ void battery() {
   static int lowCount = 0;
   if (timeMilliseconds > batteryTrigger) {
     batteryTrigger = timeMilliseconds + 1000;  // 1 per second
-    battVolt = ((float) analogRead(BATTERY)) * 0.0182;
+    battVolt = ((float) analogRead(BATTERY)) * 0.0174;
     if( battVolt < 10.0) lowCount++;
     else lowCount = 0;
     if ((lowCount > 10) && !isBattAlarmDisabled) {
@@ -173,6 +184,8 @@ void switches() {
   static boolean zState = false;
   static boolean oldZState = false;
 
+  static boolean oldRadioState = false;
+  
   // Debounce Blue
   boolean bu = digitalRead(BU_SWITCH) == LOW;
   if (bu) buTimer = timeMilliseconds;
@@ -193,12 +206,23 @@ void switches() {
 
   // Blue press transition
   if (buState && (!oldBuState)) {
-//    if (isRouteInProgress) stopRoute();
-//    else startRoute();
+    if (!isRunning) {
+      if (rwState == RW_RUNNING) rwState = RW_SPIN_DOWN;
+      else if (rwState == RW_STOP) rwState = RW_SPIN_UP;
+      else if (rwState == RW_SPIN_UP) rwState = RW_SPIN_DOWN;
+      else if (rwState == RW_SPIN_DOWN) rwState = RW_SPIN_UP;
+    }
   }
 
   // Red press transition
   if ((reState) && (!oldReState)) isRunReady = !isRunReady;
+
+  // Radio
+  if (ch3sw != oldRadioState) {
+    if (ch3sw) isRunReady = true;
+    else isRunReady = false;
+  }
+  oldRadioState = ch3sw;
 
   // X transition
   if (xState != oldXState) isBattAlarmDisabled = true;
@@ -216,16 +240,27 @@ void switches() {
  **************************************************************************/
 void blinkLed() {
   static unsigned long blinkTrigger = 0L;
+  boolean isRoll = (mode == MODE_FP) && !isRunReady;
+  if (isRoll) {
+    blinkRoll();
+  }
+
   if (timeMilliseconds > blinkTrigger) {
     blinkTrigger = timeMilliseconds + 100;  // 10 per second
 
-    int b = (patternBlue[blinkPtrBlue++] == 1) ? HIGH : LOW;
-    if (patternBlue[blinkPtrBlue] == END_MARKER) blinkPtrBlue = 0;
-    digitalWrite(BU_LED, b);
-    
-    b = (patternRed[blinkPtrRed++] == 1) ? HIGH : LOW;
-    if (patternRed[blinkPtrRed] == END_MARKER) blinkPtrRed = 0;
-    digitalWrite(RE_LED, b);
+    int b = (patternBd[blinkPtrBd++] == 1) ? HIGH: LOW;
+    if (patternBd[blinkPtrBd] == END_MARKER) blinkPtrBd = 0;
+    digitalWrite(BD_LED, b);
+
+    if (!isRoll) {
+      b = (patternBlue[blinkPtrBlue++] == 1) ? HIGH : LOW;
+      if (patternBlue[blinkPtrBlue] == END_MARKER) blinkPtrBlue = 0;
+      digitalWrite(BU_LED, b);
+      
+      b = (patternRed[blinkPtrRed++] == 1) ? HIGH : LOW;
+      if (patternRed[blinkPtrRed] == END_MARKER) blinkPtrRed = 0;
+      digitalWrite(RE_LED, b);
+    }
   }
 }
 
@@ -248,9 +283,39 @@ void setBlink(int led, byte* pattern) {
         blinkPtrBlue = 0;
       }
       break;
+    case BD_LED:
+      if (patternBd != pattern) {
+        patternBd = pattern;
+        blinkPtrBd = 0;
+      }
+      break;
     default:
       break;
   }
+}
+
+
+
+/**************************************************************************.
+ *  blinkRoll() Blink red & blue light to indicate roll
+ **************************************************************************/
+void blinkRoll() {
+  static unsigned int lastBlink;
+  static boolean toggle = false;
+  
+  int blinkPeriod = abs((int) (200.0 * gaRoll));
+  if (blinkPeriod > 1000) blinkPeriod = 1000;
+  if ((timeMilliseconds - lastBlink) > blinkPeriod) {
+    toggle = !toggle;
+    if ( gaRoll < 0.0) {
+      digitalWrite(BU_LED, toggle ? HIGH : LOW);
+      digitalWrite(RE_LED, LOW);
+    } else {
+      digitalWrite(RE_LED, toggle ? HIGH : LOW);
+      digitalWrite(BU_LED, LOW);
+    }
+    lastBlink = timeMilliseconds;
+  }    
 }
 
 
@@ -308,7 +373,7 @@ void rcRadioInit() {
 
 
 /**************************************************************************.
- *  chXIsr() 
+ *  chXIsr() Interrupt routines for radio pulses
  **************************************************************************/
 void ch2Isr() {
   unsigned int t = micros();
@@ -345,9 +410,11 @@ void ch4Isr() {
  **************************************************************************/
 void readRcRadio() {
   float p;
-  if ((timeMicroseconds - ch2riseTime) > 100000) {
+  int deadTime = timeMicroseconds - ch2riseTime;
+  if (deadTime > 200000) {
     controllerX = 0.0;
     controllerY = 0.0;
+    ch3sw = false;
   } else {
     p = ((float) (ch2pw - 1500));
     controllerY = p / 326.0;
@@ -358,6 +425,62 @@ void readRcRadio() {
     controllerX = constrain(controllerX, -1.0, 1.0);
   }
 }
+
+
+/**************************************************************************.
+ *  rwSpin() Spin up and spin down reaction wheel
+ **************************************************************************/
+void rwSpin() {
+  const float UP_DOWN_RATE = 0.01;
+  const float TARGET_RATE = 2.0;
+  static unsigned int spinTrigger = 0L;
+  if (timeMilliseconds > spinTrigger) {
+    spinTrigger = timeMilliseconds + 10; // 100/sec
+    switch (rwState) {
+      case RW_SPIN_UP:
+        if (targetRwFps < TARGET_RATE) {
+          targetRwFps += UP_DOWN_RATE;
+          if (targetRwFps > TARGET_RATE) {
+            targetRwFps = TARGET_RATE;
+            rwState = RW_RUNNING;
+          }
+        } else {
+          targetRwFps -= UP_DOWN_RATE;
+          if (targetRwFps < TARGET_RATE) {
+            targetRwFps = TARGET_RATE;
+            rwState = RW_RUNNING;
+          }
+        }
+        setTargetSpeed(false, targetRwFps);
+        break;
+      case RW_SPIN_DOWN:
+        if (targetRwFps > 0.0) {
+          targetRwFps -= UP_DOWN_RATE;
+          if (targetRwFps < 0.0) {
+            targetRwFps = 0.0;
+            rwState = RW_STOP;
+          }
+        } else {
+          targetRwFps += UP_DOWN_RATE;
+          if (targetRwFps > 0.0) {
+            targetRwFps = 0.0;
+            rwState = RW_STOP;
+          }
+        }
+        setTargetSpeed(false, targetRwFps);
+        break;
+      case RW_RUNNING:
+        if (!isRunReady) {
+          if (targetRwFps != TARGET_RATE) rwState = RW_SPIN_UP;
+        }
+        break;
+      case RW_STOP:
+        if (targetRwFps != 0.0) rwState = RW_SPIN_DOWN;
+        setTargetSpeed(false, targetRwFps);
+        break;
+    }
+  }
+} // end rwSpin()
 
 // Routines output -1000 to +1000 for pulse widths of 1 MS to 1 MS
 void   ch1Isr() {

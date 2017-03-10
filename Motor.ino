@@ -64,7 +64,9 @@ void encoderIsrDw() {
   int speedError = mFpsDw - targetMFpsDw;
   int pwCorrection = MOTOR_GAIN * ((float) speedError);
   int newPw =  targetPwDw - pwCorrection;
-  setMotorPw(true, newPw); //------------------------------------------------------------------------------
+  if (mode != MODE_PWM_SPEED) {
+    setMotorPw(true, newPw); //------------------------------------------------------------------------------
+  }
 //  addLog(
 //    (long) (0),
 //    (short) (mFpsDw),
@@ -112,14 +114,16 @@ void encoderIsrRw() {
   int speedError = mFpsRw - targetMFpsRw;
   int pwCorrection = MOTOR_GAIN * ((float) speedError);
   int newPw =  targetPwRw - pwCorrection;
-  setMotorPw(false, newPw);
+  if (mode != MODE_PWM_SPEED) {
+    setMotorPw(false, newPw);
+  }
 //  addLog(
 //    (long) (tickTimeRw),
 //    (short) (tickPeriodRw),
-//    (short) (tickTimeRw),
+//    (short) (tickPositionRw),
 //    (short) (mFpsRw),
-//    (short) (targetMFpsRw),
-//    (short) (speedError),
+//    (short) (gyroYawRate * 100.0),
+//    (short) (gyroHeading * 100.0),
 //    (short) (encB)
 //   );
 } // end encoderIsrRw();  // !!!!!!!!!!!!!! reactionwheel !!!!!!!!!!!!!!
@@ -135,6 +139,9 @@ void checkMotor(boolean isDw) {
     speedError = mFpsDw - targetMFpsDw;
     pwCorrection = MOTOR_GAIN * ((float) speedError);
     newPw =  targetPwDw - pwCorrection;
+    if (isRunning && ((mode == MODE_FP) ||  (mode == MODE_T_SPEED) || (mode == MODE_PWM_SPEED))) {
+      setMotorPw(true, newPw);
+    }
 //    addLog(
 //      (long) (5),
 //      (short) (mFpsDw),
@@ -149,11 +156,9 @@ void checkMotor(boolean isDw) {
     speedError = mFpsRw - targetMFpsRw;
     pwCorrection = MOTOR_GAIN * ((float) speedError);
     newPw =  targetPwRw - pwCorrection;
+    setMotorPw(false, newPw);
   }
-  if (isRunning && ((mode == MODE_FP) ||  (mode == MODE_T_SPEED) || (mode = MODE_RW_ANGLE))) {
-    setMotorPw(isDw, newPw);
-  }
-}
+ }
 
 
 

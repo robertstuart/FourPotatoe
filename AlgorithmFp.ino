@@ -1,31 +1,28 @@
+
 void fpRun() {
-//  timeMicroseconds = micros();
-//  timeMilliseconds = timeMicroseconds / 1000;
-  tickPosition = 0L;
   tVal = T_VAL;
   uVal = U_VAL;
   vVal = V_VAL;
   wVal = W_VAL;
   xVal = X_VAL;
   yVal = Y_VAL;
-  zVal = Z_VAL;
-//  setBlink(RE_LED, BLINK_SB);
+
+  setBlink(RE_LED, BLINK_FF);
+  setBlink(BU_LED, BLINK_FF);
+  setBlink(BD_LED, BLINK_SB);
   delay(100);  // For switches()
   while (mode == MODE_FP) { // main loop
     commonTasks();
-//    static int intCount = 0;
-//    static unsigned int loopTrigger = 0;
-    // Do the timed loop
     timeMicroseconds = micros();
     timeMilliseconds = timeMicroseconds / 1000;
+
+    // Timed loop
     if (isNewGyro()) {
       setGyroData();
       readRcRadio();
       pitchBalance();
       rollBalance();
-//      yawAction(0.0);
       sendLog();
-      //      safeAngle();
       checkMotor(true);
       checkMotor(false);
     }
@@ -38,29 +35,30 @@ void fpRun() {
 
 
 /***********************************************************************.
-    pitchBalance()
-        Balance on the pitch axis.  Go forward or backward to counteract
-        falling forward or backward.
-        Set the motor speed (fpFps).
+ *  pitchBalance()
+ *      Balance on the pitch axis.  Go forward or backward to counteract
+ *      falling forward or backward.
+ *      Set the motor speed (fpFps).
  ***********************************************************************/
 void pitchBalance() {
   readSpeed(true);
   // compute the Center of Oscillation Speed (COS)
-  fpRotation = U_VAL * (-gyroPitchDelta); // 10.0 for 4potatoe
+  fpRotation = U_FP_VAL * (-gyroPitchDelta); // 10.0 for 4potatoe
   fpCos = fpsDw + fpRotation; // subtract rotation
   fpLpfCos = (fpLpfCosOld * (1.0 - COS_TC))  + (fpCos  * COS_TC); // smooth it out a little (0.2)
   fpLpfCosAccel = fpLpfCos - fpLpfCosOld;
   fpLpfCosOld = fpLpfCos;
 
-  fpControllerSpeed = controllerY * SPEED_MULTIPLIER;
+//  fpControllerSpeed = controllerY * SPEED_MULTIPLIER;
+  fpControllerSpeed = 4.0;
 
-  fpControllerSpeed = jigZero(fpControllerSpeed); 
+//  fpControllerSpeed = jigZero(fpControllerSpeed); 
 
   // find the speed error
   fpSpeedError = fpControllerSpeed - fpLpfCos;
 
   // compute a weighted angle to eventually correct the speed error
-  fpTargetAngle = -(fpSpeedError * V_VAL); //************ Speed error to angle *******************
+  fpTargetAngle = -(fpSpeedError * V_FP_VAL); //************ Speed error to angle *******************
 
   // Compute maximum angles for the current wheel speed and enforce limits.
   float fwdA = fpsDw - 16.0;
@@ -70,8 +68,8 @@ void pitchBalance() {
 
   // Compute angle error and weight factor
   fpAngleError = fpTargetAngle - gaPitch;  //
-  fpCorrection = fpAngleError * wVal; //******************* Angle error to speed *******************
-  fpLpfCorrection = (fpLpfCorrectionOld * (1.0f - X_VAL))  + (fpCorrection * X_VAL);
+  fpCorrection = fpAngleError * W_FP_VAL; //******************* Angle error to speed *******************
+  fpLpfCorrection = (fpLpfCorrectionOld * (1.0f - X_FP_VAL))  + (fpCorrection * X_FP_VAL);
   fpLpfCorrectionOld = fpLpfCorrection;
 
   // Add the angle error to the base speed to get the target speed.
@@ -86,7 +84,7 @@ void pitchBalance() {
     jigZero()  Jig back and fort then fpControllerSpeed is low.
  ***********************************************************************/
 const float JIG_SPEED = 4.0;     // Target speed during jig
-const float JIG_DISTANCE = 20.0;  // distance from center (JigTickPosition
+const float JIG_DISTANCE = 200.0;  // distance from center (JigTickPosition
 const float GO_TO_INCREMENT = 0.03;
 
 float jigZero(float controllerSpeed) {
@@ -139,119 +137,208 @@ float jigZero(float controllerSpeed) {
 
 
 /***********************************************************************.
-    rollBalance()
+ *   rollBalance()
  ***********************************************************************/
-const float ROLL_CORRECTION = 3.2; // start w 2.0
+const float ACCEL_TO_FPS = -0.2;
 float targetBearing = 0.0;  // temp, will add rc steering control
 
 void rollBalance() {
   float correction = 0.0;
-  float raw = gaRoll * ROLL_CORRECTION;
-//  raw -= (targetBearing - gyroHeading) * BEARING_CORRECTION;
+  static double yFps = 0.0;
+  static double xFps = 0.0;
+  static float oldGRoll = 0;
+  float pRoll, dRoll, pVector, dVector;
+
+//  // Compute the heading for the Center of Oscillation
+//  // by accumulated velocity from leaning.
+//  double sinGh = sin(gyroHeading * DEG_TO_RAD);
+//  double cosGh = cos(gyroHeading * DEG_TO_RAD);
+//  double tanPitch = tan(gaPitch * DEG_TO_RAD);
+//  double tanRoll = tan(gaRoll * DEG_TO_RAD);
+//  double yAccel = (cosGh * tanPitch) + (sinGh * tanRoll);
+//  double xAccel = (sinGh * tanPitch) + (cosGh * tanRoll);
+//  yFps += yAccel * ACCEL_TO_FPS;
+//  xFps += xAccel * ACCEL_TO_FPS;
+//  double coHeading = -RAD_TO_DEG * atan2(xFps, yFps);
+//
+//  // Add code here to complementary filter with gyroHeading
+//  //    to counteract drift due to "rollDrift" & "pitchDrift"
+
+// Compute the heading for the Center of Oscillation
+// by gyroHeading and roll rate.
+  float rollRate = gRoll - oldGRoll;
+  oldGRoll = gRoll;
+  float coHeading = gyroHeading + (rollRate * 50.0);
+
+  // Add up the P and D values
+//  if (abs(controllerX) > 0.05) {
+//    targetHeading = coHeading;
+//    pVector = (controllerX * 3.0) - gaRoll;
+//    pRoll = 0.0;
+// } else {
+//    pVector = coHeading - targetHeading;  // Little difference with gyroHeading
+//    pVector = gyroHeading - targetHeading;
+//    pRoll = gaRoll;
+//  } 
+  targetHeading += controllerX * 0.3;
+  pRoll = gaRoll;
+  pRoll *=  (tVal * 0.1);
+  dRoll = gyroRollRate * (uVal * 0.001); 
+  pVector = coHeading - targetHeading;  // Little difference with gyroHeading
+  pVector *=  (vVal * 0.01);  // not set
+  dVector = gyroRollRate * (wVal * 0.01);                  // not set
+  float pd = pRoll + dRoll + pVector + dVector;
+  
+  if (!isRunning) {
+    zeroYaw();
+    targetHeading = 0.0;
+    tickPositionDw = 0;
+    yFps = xFps = 0.0D;
+  }
+
   if (abs(fpsDw) > 0.5) {
-    correction = raw / fpLpfCos;
+    correction += pd / fpsDw;
   } else {
     correction = 0.0;
   }
-  yawAction(gyroHeading + correction);
+  yawAction(correction);
   
-//  static unsigned int loop = 0;
-//  if ((++loop % 104) == 0) {
-//    sprintf(message, "gyroYawRate: %6.2f \t gyroHeading: %6.2f", gyroYawRate, gyroHeading);
-//    sendBMsg(SEND_MESSAGE, message);
+  if (isRunning) {
+    addLog(
+      (long) ((tickPositionDw / TICKS_PER_FOOT) * 100.0),
+      (short) (gaRoll * 100.0),
+      (short) (gyroRollRate * 100.0),
+      (short) (targetHeading * 100.0),
+      (short) (gyroHeading * 100.0),
+      (short) (coHeading * 100.0),
+      (short) (0)
+    );
+  }
 //  }
+  
+  static unsigned int loop = 0;
+  if ((++loop % 104) == 0) {
+    sprintf(message, "targetHeading: %4.1f \t gyroHeading: %4.1f \t coHeading: %4.1f", targetHeading, coHeading, coHeading);
+    sendBMsg(SEND_MESSAGE, message);
+  }
 }
-
 
 
 /**************************************************************************.
  *  yawAction()    Called 200/sec.  Adjusts the Reaction Wheel Speed so that
  *                 FourPotatoe orients toward target
  **************************************************************************/
-//const float DECEL_FACTOR = 30.0;     // Point to change rw accel/decel
-const float DECEL_FACTOR = 60.0;     // Point to change rw accel/decel
-const float DEAD_ANGLE_RANGE = 1.0;  //+- range where no action is taken
-//const float ACCEL_RATE = 2.00;    // Change in rw speed to reach target angle
-const float ACCEL_RATE = 1.50;    // Change in rw speed to reach target angle
-const float COAST_RATE = 0.1;
-const int FP_DEAD = 0;
-const int FP_CW = 1;
-const int FP_CCW = 2;
-
-void yawAction(float targetHeading) {
-  static int motion = FP_DEAD;  
-  static float pastAccel[] = {0.0, 0.0, 0.0};
-  static int pastAccelPtr = 0;
-  static float sumPastAccel = 0.0;
-  float estHeading = gyroHeading + (sumPastAccel * 0.1);
-//  float aDiff = rangeAngle(targetHeading - estHeading);
-  float aDiff = rangeAngle(targetHeading - gyroHeading);
-  float decelThreshold = aDiff * DECEL_FACTOR;
-  float rwAccel;
-  int path;
-
+void yawAction(float headingCorrection) {
+  static float currentTargetSpeed = 0.0;
   readSpeed(false);
+
+  float yawP = headingCorrection * (xVal * 0.0001);
+  float yawD = gyroYawRaw *(yVal * 0.000001);
+  float rwAccel = yawP - yawD;
+
+  if (isRunning) targetRwFps -= rwAccel;
+  else targetRwFps = targetRwFps;
   
-  // Reaction wheel motion.
-  if (motion == FP_DEAD) {
-    if (aDiff > DEAD_ANGLE_RANGE) {
-      motion = FP_CW;
-    } else if (aDiff < -DEAD_ANGLE_RANGE) {
-      motion = FP_CCW;
-    } else {
-      if (fpsRw > 0) rwAccel = - COAST_RATE;
-      else rwAccel = COAST_RATE;
-      if (abs(fpsRw) < COAST_RATE) rwAccel = - fpsRw;
-      path = 0;
-    }
-  } 
-  if (motion == FP_CW) {
-    if (aDiff < 0.0) {
-      rwAccel = + COAST_RATE;
-      motion = FP_DEAD;
-    } else { 
-      if (gyroYawRate > decelThreshold) {
-        rwAccel = ACCEL_RATE; 
-        path = 1;
-      } else {
-        rwAccel = -ACCEL_RATE;
-        path = 2;
-      }
-    }
-  }
-  if (motion == FP_CCW) {
-    if (aDiff > 0.0) {
-      rwAccel = - COAST_RATE;
-      motion = FP_DEAD;
-    } else {
-      if (gyroYawRate < decelThreshold) {
-        rwAccel = -ACCEL_RATE;
-        path = 3;
-      } else {
-        rwAccel = ACCEL_RATE;
-        path = 4;
-      }
-    }
-  }
+  targetRwFps = constrain(targetRwFps, -12.0, 12.0);
+  setTargetSpeed(false, targetRwFps);
 
-  // Log past motion it improve gyroHeading estimate
-  float oldAccel = pastAccel[pastAccelPtr];
-  pastAccel[pastAccelPtr] = rwAccel;
-  sumPastAccel = sumPastAccel + rwAccel - oldAccel;
-  pastAccelPtr = ++pastAccelPtr % (sizeof(pastAccel)/sizeof(float));
-
-  setTargetSpeed(false, fpsRw + rwAccel);
-
-  addLog(
-    (long) (path + (isRunning * 100)),
-    (short) (gyroYawRate * 100.0),
-    (short) (gaRoll * 100.0),
-    (short) (targetHeading * 100.0),
-    (short) (gyroHeading * 100.0),
-    (short) (fpsRw * 100.0),
-    (short) (decelThreshold * 100.0)
-  );
+//  if (isRunning) {
+//    addLog(
+//      (long) (fpsDw * 100.0),
+//      (short) (gaPitch * 100.0),
+//      (short) (gaRoll * 100.0),
+//      (short) (tickPositionDw),
+//      (short) (gyroHeading * 100.0),
+//      (short) (0),
+//      (short) (0)
+//    );
+//  }
 }
+
+
+
+///**************************************************************************.
+// *  yawAction()    Called 200/sec.  Adjusts the Reaction Wheel Speed so that
+// *                 FourPotatoe orients toward target
+// **************************************************************************/
+////  Increase DECEL_FACTOR to have less decel as approach target
+//const float DECEL_FACTOR = 30.0;     // Point to change rw accel/decel.
+////const float DECEL_FACTOR = 60.0;     // Point to change rw accel/decel
+////const float DECEL_FACTOR = 100.0;     // Point to change rw accel/decel
+//const float DEAD_ANGLE_RANGE = 1.0;  //+- range where no action is taken
+////const float ACCEL_RATE = 2.00;    // Change in rw speed to reach target angle
+//const float ACCEL_RATE = 1.50;    // Change in rw speed to reach target angle
+//const float COAST_RATE = 0.1;
+//const int FP_DEAD = 0;
+//const int FP_CW = 1;
+//const int FP_CCW = 2;
+//
+//void yawAction(float headingCorrection) {
+//  static int motion = FP_DEAD;  
+////  float aDiff = rangeAngle(targetHeading - gyroHeading);
+//  float aDiff = rangeAngle(headingCorrection);
+//  float decelThreshold = aDiff * DECEL_FACTOR;
+//  float rwAccel;
+//  int path;
+//
+//  readSpeed(false);
+//  
+//  // Reaction wheel motion.
+//  if (motion == FP_DEAD) {
+//    if (aDiff > DEAD_ANGLE_RANGE) {
+//      motion = FP_CW;
+//    } else if (aDiff < -DEAD_ANGLE_RANGE) {
+//      motion = FP_CCW;
+//    } else {
+//      if (fpsRw > 0) rwAccel = - COAST_RATE;
+//      else rwAccel = COAST_RATE;
+//      if (abs(fpsRw) < COAST_RATE) rwAccel = - fpsRw;
+//      path = 0;
+//    }
+//  } 
+//  if (motion == FP_CW) {
+//    if (aDiff < 0.0) {
+//      rwAccel = + COAST_RATE;
+//      motion = FP_DEAD;
+//    } else { 
+//      if (gyroYawRate > decelThreshold) {
+//        rwAccel = ACCEL_RATE; 
+//        path = 1;
+//      } else {
+//        rwAccel = -ACCEL_RATE;
+//        path = 2;
+//      }
+//    }
+//  }
+//  if (motion == FP_CCW) {
+//    if (aDiff > 0.0) {
+//      rwAccel = - COAST_RATE;
+//      motion = FP_DEAD;
+//    } else {
+//      if (gyroYawRate < decelThreshold) {
+//        rwAccel = -ACCEL_RATE;
+//        path = 3;
+//      } else {
+//        rwAccel = ACCEL_RATE;
+//        path = 4;
+//      }
+//    }
+//  }
+//
+//  setTargetSpeed(false, fpsRw + rwAccel);
+//
+//  if (isRunning) {
+//    addLog(
+//      (long) (path + (isRunning * 100)),
+//      (short) (gyroYawRate * 100.0),
+//      (short) (gaRoll * 100.0),
+//      (short) (headingCorrection * 100.0),
+//      (short) (gyroHeading * 100.0),
+//      (short) (fpsRw * 100.0),
+//      (short) (gyroRollRaw)
+//    );
+//  }
+//}
 
  
 //const float DECEL_FACTOR = 15.0;     // Point to change rw accel/decel

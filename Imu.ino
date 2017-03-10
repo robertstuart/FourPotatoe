@@ -92,7 +92,7 @@ void setAccelData() {
   }
 
   // Roll
-  aRoll =  (atan2(lsm6.a.y, -lsm6.a.x) * RAD_TO_DEG) + yVal;
+  aRoll =  (atan2(lsm6.a.y, -lsm6.a.x) * RAD_TO_DEG) + 0.4;
   gaRoll = (gaRoll * GYRO_WEIGHT) + (aRoll * (1 - GYRO_WEIGHT)); // Weigh factors
 }
 

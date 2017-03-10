@@ -5,18 +5,27 @@
 #include <LSM6.h>
 
 /******************** Constants to be adjusted **************************/
-const boolean IS_ENABLE_DW = true;
-const boolean IS_ENABLE_RW = true;
+
+const float T_RW_VAL = 0.0;  // angle for, rwAngle
+const float T_VAL = 60.0;  // rollP for rollBalance()
+const float U_VAL = 250.0;    // rollD for rollBalance()
+const float V_VAL = 60.0;    // vectorP for rollBalance()
+const float W_VAL = 40.0;    // vectorD for rollBalance()
+const float X_VAL = 190.0;   // yawD for yawAction()
+const float Y_VAL = 60.0;   // yawP for yawAction()
+const float Z_VAL = 0.0;
+
+const float T_FP_VAL = 6.0;
+const float U_FP_VAL = 10.0;
+const float V_FP_VAL = 4.0;
+const float W_FP_VAL = 0.40;  // 0.18
+const float X_FP_VAL = 0.05;
+
+const boolean IS_ENABLE_DW = false;
+const boolean IS_ENABLE_RW = false;
 const float TICKS_PER_FOOT = 292.2;
 const float FEET_PER_TICK = 1 / TICKS_PER_FOOT;
 const int PWM_FREQ = 20000;
-const float T_VAL = 6.0;
-const float U_VAL = 10.0;
-const float V_VAL = 4.0;
-const float W_VAL = 0.40;  // 0.18
-const float X_VAL = 0.05;
-const float Y_VAL = 0.4;   // +values veer left, -values right
-const float Z_VAL = 0.0;
 const float COS_TC = 0.2;
 const float SPEED_MULTIPLIER = 5.0; // Multiplier for controllerX to get speed
 const float PITCH_DRIFT = -36.0;
@@ -33,11 +42,17 @@ const int JIG_TICK_RANGE = 55;
  * 1/293 = .00341
  */
 const double ENC_FACTOR = 3458.0f;  // Change pulse width to fps speed
-const long ENC_FACTOR_M = 3458000;  // Change pulse width to milli-fps speed
+const long ENC_FACTOR_M = ENC_FACTOR * 1000.0;  // Change pulse width to milli-fps speed
 
 static const int ZERO_PW = 32766;  // Center of pulse width range. FPS = 0;
 static const int DEAD_ZONE = 1200; // Zone around ZERO_PW that gives zero FPS
 static const int PW_VS_FPS = 2800.0; // change in PW gives change of 1.0 FPS
+
+// State of the reaction wheel
+static const int RW_STOP = 0;
+static const int RW_SPIN_UP = 1;
+static const int RW_RUNNING = 2;
+static const int RW_SPIN_DOWN = 3;
 
 #define BLUE_SER Serial3
 
@@ -53,8 +68,9 @@ const int ENC_B_RW = 24;
 const int ENC_A_DW = 23;
 const int ENC_B_DW = 25;
 
-const int BU_LED     = 28; 
-const int RE_LED     = 29;
+const int BD_LED     = 13; // led on arduino board
+const int RE_LED     = 28; 
+const int BU_LED     = 29;
 const int RE_SWITCH  = 30;
 const int BU_SWITCH  = 31;
 const int X_SWITCH   = 32;
@@ -121,10 +137,16 @@ float fpCorrection = 0.0;
 float fpLpfCorrection = 0.0;
 float fpLpfCorrectionOld = 0.0;
 float fpFps = 0.0;
+float targetHeading = 0.0;
+
 // logXX()
 char message[200];
 
-float targetRwSpeed = 0.0;
+float roll_correction = 3.2;
+float yaw_p = 10.0;
+float yaw_d = 10.0;
+
+float targetRwFps = 0.0;
 float targetRwAngle = 0.0;
 
 /************************ Imu.ino *************************************/
@@ -183,11 +205,11 @@ float hcY = 0.0;
 float pcY = 0.0;
 float controllerX = 0.0;
 float controllerY = 0.0;
-float tVal = T_VAL;
-float uVal = U_VAL;
-float vVal = V_VAL;
-float wVal = W_VAL;
-float xVal = X_VAL;
+float tVal = T_FP_VAL;
+float uVal = 3.2; //U_FP_VAL;
+float vVal = V_FP_VAL;
+float wVal = W_FP_VAL;
+float xVal = X_FP_VAL;
 float yVal = Y_VAL;  // roll zero
 float zVal = Z_VAL;  // pitch zero
 
@@ -199,6 +221,7 @@ boolean isController = false;
 //battery()
 float battVolt = 0.0;
 
+/*********************** Global variables ************************************/
 boolean isRunReady = false;
 boolean isRunning = false;
 boolean isJigger = false;
@@ -207,22 +230,24 @@ boolean isDumpingData = false;
 boolean isBattAlarmDisabled = false;
 boolean isJig = false;
 
+int rwState = RW_STOP;
+
 int ch2pw = 0;
 int ch3pw = 0;
 int ch4pw = 0;
-unsigned int ch2riseTime = 0;
-unsigned int ch3riseTime = 0;
-unsigned int ch4riseTime = 0;
+volatile unsigned int ch2riseTime = 0;
+volatile unsigned int ch3riseTime = 0;
+volatile unsigned int ch4riseTime = 0;
 boolean ch3sw = false;
 
 unsigned int timeMilliseconds = 0;
 unsigned int timeMicroseconds = 0;
-int tickPosition = 0;
 
 void setup() {
 
   pinMode(BU_LED, OUTPUT);
   pinMode(RE_LED, OUTPUT);
+  pinMode(BD_LED, OUTPUT);
   pinMode(SPEAKER, OUTPUT);
   pinMode(RE_SWITCH, INPUT_PULLUP);
   pinMode(BU_SWITCH, INPUT_PULLUP);
@@ -262,6 +287,7 @@ void loop() {
     commonTasks; 
     break;
   } // end switch(mode)
+
 }
 
 
@@ -276,9 +302,8 @@ void aPwmSpeed() {
   tVal = ZERO_PW;
   uVal = ZERO_PW;
   isRunning = true;
-  setBlink(RE_LED, BLINK_OFF);
-  setBlink(BU_LED, BLINK_FF);
-  
+  setBlink(RE_LED, BLINK_FF);
+  setBlink(BD_LED, BLINK_FF);
   while (mode == MODE_PWM_SPEED) {
     commonTasks();
     if (isNewGyro()) log200PerSec();
@@ -289,7 +314,6 @@ void aPwmSpeed() {
       setMotorPw(false, ((unsigned int) (uVal)));
       readSpeed(true);  
       readSpeed(false);  
-      log20PerSec();         
       sendStatusBluePc();
 //      if (isDumpingTicks) dumpTicks();
     } // end timed loop 
@@ -305,26 +329,22 @@ void aTickSpeed() {
   static unsigned int loop = 0;
   tVal = 0.0;
   uVal = 0.0;
-  setBlink(RE_LED, BLINK_OFF);
-  setBlink(BU_LED, BLINK_FF);
+  setBlink(RE_LED, BLINK_FF);
+  setBlink(BD_LED, BLINK_FF);
   
   while (mode == MODE_T_SPEED) {
     commonTasks();
     if (isNewGyro()) {
+      setGyroData();
       fpControllerSpeed = ((float) tVal) / 1000.0;
       setTargetSpeed(true, fpControllerSpeed);
-      targetRwSpeed = ((float) uVal) / 1000.0;
-      setTargetSpeed(false, targetRwSpeed);
+      targetRwFps = ((float) uVal) / 1000.0;
+      setTargetSpeed(false, targetRwFps);
       checkMotor(true);
       checkMotor(false);
       readSpeed(true);  
       readSpeed(false);  
-//      sendLog();
-
-      if ((++loop % 200) == 0) {
-        sprintf(message, "fpControllerSpeed: %5.2f \t fpsDw: %5.2f \t late: %d", fpControllerSpeed, fpsDw, targetPwDw);
-        sendBMsg(SEND_MESSAGE, message);
-      }
+      sendLog();
     }
   } // while
 } // aTickSpeed()
@@ -335,34 +355,27 @@ void aTickSpeed() {
  * aRwAngle()
  **************************************************************************/
 void aRwAngle() {
-  tVal = 0.0;
-  uVal = 0.0;
-  vVal = 0.0;
-  delay(100);  // For switches()
+  tVal = T_RW_VAL;  // Heading adjustment
+  vVal = X_VAL;  // P value for yawAction() yawP
+  wVal = Y_VAL;  // D value for yawAction() yawD
   static float sum = 0.0;
   static int loop = 0;
+  float headAngle;
+  
+  delay(100);  // For switches()
   
   while (mode == MODE_RW_ANGLE) {
     commonTasks();
     if (isNewGyro()) {
       setGyroData();
-      
-      sum += gyroPitchRaw;
-      loop++;
-      if (loop == 1000) {
-        sprintf(message, "raw: %6.2f \t ", sum / 1000.0);
-        sendBMsg(SEND_MESSAGE, message);
-        loop = 0;
-        sum = 0.0;
-      }
-
-      readSpeed(false);  
-      yawAction(tVal);
+      readSpeed(false); 
+      headAngle = tVal * 1.0;
+      yawAction(headAngle - gyroHeading);
       checkMotor(false);
       sendLog();
       if (!isRunning) {
         zeroYaw();
-        targetRwSpeed = 0.0;
+//        targetRwFps = 0.0;
       }
 
 //      if ((++loop % 200) == 0) {
